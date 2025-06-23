@@ -41,7 +41,7 @@ router.post('/register', async (req, res) => {
 
   try {
     // Check if user already exists
-    const existingUserCheck = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+    const existingUserCheck = await db.query('SELECT * FROM public.users WHERE LOWER(email) = LOWER($1)', [email]);
     if (existingUserCheck.rows.length > 0) {
       return res.status(409).json({ message: 'User with this email already exists.' });
     }
@@ -55,14 +55,14 @@ router.post('/register', async (req, res) => {
     let queryParams;
     if (user_type === 'individual') {
       insertQuery = `
-        INSERT INTO users (email, password_hash, user_type, full_name)
+        INSERT INTO public.users (email, password_hash, user_type, full_name)
         VALUES ($1, $2, $3, $4)
         RETURNING id, email, user_type, full_name, created_at;
       `;
       queryParams = [email, password_hash, user_type, full_name];
     } else { // company
       insertQuery = `
-        INSERT INTO users (email, password_hash, user_type, company_name, industry, company_size)
+        INSERT INTO public.users (email, password_hash, user_type, company_name, industry, company_size)
         VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING id, email, user_type, company_name, created_at;
       `;
@@ -125,7 +125,7 @@ router.post('/firebase-login', async (req, res) => {
     }
 
     // Check if user exists in your database
-    let userResult = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+    let userResult = await db.query('SELECT * FROM public.users WHERE LOWER(email) = LOWER($1)', [email]);
     let user = userResult.rows[0];
 
     if (!user) {
@@ -140,7 +140,7 @@ router.post('/firebase-login', async (req, res) => {
       const password_hash_placeholder = await bcrypt.hash(placeholderPassword, salt);
 
       const newUserQuery = `
-        INSERT INTO users (email, password_hash, user_type, full_name, firebase_uid, is_email_verified)
+        INSERT INTO public.users (email, password_hash, user_type, full_name, firebase_uid, is_email_verified)
         VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING id, email, user_type, full_name, firebase_uid, is_email_verified, created_at;
       `;
@@ -152,7 +152,7 @@ router.post('/firebase-login', async (req, res) => {
     } else {
       // User exists, potentially link Firebase UID if not already linked
       if (!user.firebase_uid) {
-        await db.query('UPDATE users SET firebase_uid = $1, is_email_verified = TRUE WHERE id = $2', [firebaseUid, user.id]);
+        await db.query('UPDATE public.users SET firebase_uid = $1, is_email_verified = TRUE WHERE id = $2', [firebaseUid, user.id]);
         user.firebase_uid = firebaseUid; // Update in-memory user object
         user.is_email_verified = true;
       }
@@ -206,7 +206,7 @@ router.post('/mark-as-verified', authMiddleware, async (req, res, next) => {
 
   try {
     const updateQuery = `
-      UPDATE users
+      UPDATE public.users
       SET is_phone_verified = TRUE, updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
       RETURNING id, email, is_phone_verified, user_type, full_name, company_name;
@@ -240,7 +240,7 @@ router.post('/login', async (req, res) => {
 
   try {
     // Retrieve user by email
-    const userResult = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+    const userResult = await db.query('SELECT * FROM public.users WHERE LOWER(email) = LOWER($1)', [email]);
     if (userResult.rows.length === 0) {
       return res.status(401).json({ message: 'Invalid credentials. User not found.' });
     }
