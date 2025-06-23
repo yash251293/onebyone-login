@@ -1,9 +1,10 @@
 const express = require('express');
-const bcrypt = require('bcryptjs');    // Requires npm install
-const jwt = require('jsonwebtoken'); // Requires npm install
-const db = require('../db');         // Assumes db/index.js and pg (requires npm install)
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const db = require('../db');
 const router = express.Router();
-const authMiddleware = require('../middleware/authMiddleware'); // Added authMiddleware import
+const authMiddleware = require('../middleware/authMiddleware');
+const admin = require('../config/firebaseAdmin'); // Import Firebase Admin
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
@@ -100,6 +101,98 @@ router.post('/register', async (req, res) => {
 
     // Default server error if not a recognizable DB error
     res.status(500).json({ message: 'Server error during registration. Please check server logs for more details.' });
+  }
+});
+
+// POST /api/auth/firebase-login
+router.post('/firebase-login', async (req, res) => {
+  const { token: firebaseToken } = req.body;
+
+  if (!firebaseToken) {
+    return res.status(400).json({ message: 'Firebase ID token is required.' });
+  }
+
+  try {
+    // Verify the ID token using Firebase Admin SDK
+    const decodedToken = await admin.auth().verifyIdToken(firebaseToken);
+    const firebaseUid = decodedToken.uid;
+    const email = decodedToken.email;
+    const fullNameFromFirebase = decodedToken.name || email.split('@')[0]; // Fallback for name
+
+    if (!email) {
+      // This case should be rare if Firebase project requires email for Google Sign-In
+      return res.status(400).json({ message: 'Email not available from Firebase token.' });
+    }
+
+    // Check if user exists in your database
+    let userResult = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+    let user = userResult.rows[0];
+
+    if (!user) {
+      // User does not exist, create a new one
+      // For Firebase-created users, password_hash is not directly used for login.
+      // Store a placeholder or a strong random hash if your schema requires NOT NULL.
+      // Or, even better, make password_hash nullable in your DB schema if social-only users are possible.
+      // For now, let's assume password_hash can be null or we use a placeholder.
+      // We'll default user_type to 'individual'.
+      const placeholderPassword = `firebase_user_${Date.now()}`; // Not for login, just to satisfy NOT NULL if any
+      const salt = await bcrypt.genSalt(10);
+      const password_hash_placeholder = await bcrypt.hash(placeholderPassword, salt);
+
+      const newUserQuery = `
+        INSERT INTO users (email, password_hash, user_type, full_name, firebase_uid, is_email_verified)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, email, user_type, full_name, firebase_uid, is_email_verified, created_at;
+      `;
+      // Assuming firebase_uid column exists or you add it.
+      // Also setting is_email_verified to true since Firebase verifies it.
+      const newUserParams = [email, password_hash_placeholder, 'individual', fullNameFromFirebase, firebaseUid, true];
+      const newDbUser = await db.query(newUserQuery, newUserParams);
+      user = newDbUser.rows[0];
+    } else {
+      // User exists, potentially link Firebase UID if not already linked
+      if (!user.firebase_uid) {
+        await db.query('UPDATE users SET firebase_uid = $1, is_email_verified = TRUE WHERE id = $2', [firebaseUid, user.id]);
+        user.firebase_uid = firebaseUid; // Update in-memory user object
+        user.is_email_verified = true;
+      }
+    }
+
+    // User record (either existing or newly created) is now in `user`
+    // Create JWT for your application
+    const appPayload = {
+      userId: user.id,
+      userType: user.user_type,
+      email: user.email,
+      firebaseUid: user.firebase_uid // Include Firebase UID in your app token if useful
+    };
+
+    const appToken = jwt.sign(
+      appPayload,
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '1h' }
+    );
+
+    res.json({
+      message: 'Logged in successfully with Firebase!',
+      token: appToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        user_type: user.user_type,
+        full_name: user.full_name || fullNameFromFirebase, // Use DB full_name if available
+        company_name: user.company_name, // Will be null for new individual users
+        is_email_verified: user.is_email_verified,
+        firebase_uid: user.firebase_uid
+      }
+    });
+
+  } catch (error) {
+    console.error('Error during Firebase login:', error);
+    if (error.code === 'auth/id-token-expired' || error.code === 'auth/id-token-revoked' || error.code === 'auth/invalid-id-token') {
+      return res.status(401).json({ message: 'Invalid or expired Firebase token.', code: error.code });
+    }
+    res.status(500).json({ message: 'Server error during Firebase login.' });
   }
 });
 

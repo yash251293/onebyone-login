@@ -1,4 +1,6 @@
 require('dotenv').config();
+require('./config/firebaseAdmin'); // Initialize Firebase Admin SDK
+
 const express = require('express');
 const cors = require('cors');
 
