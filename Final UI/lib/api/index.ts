@@ -158,3 +158,14 @@ export const markUserAsVerified = async (token: string) => {
     // No body needed for this specific request if backend uses token for user ID
   });
 };
+
+// New function for Firebase social login
+export const loginWithFirebaseToken = async (firebaseToken: string) => {
+  // This endpoint (/auth/firebase-login) needs to be created on your backend.
+  // It should verify the firebaseToken, find or create a user, and return
+  // your application's JWT and user data, similar to the standard /auth/login.
+  return request<any>('/auth/firebase-login', { // TODO: Define specific LoginResponse type
+    method: 'POST',
+    body: { token: firebaseToken }, // Sending the Firebase ID token in the request body
+  });
+};

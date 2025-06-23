@@ -12,10 +12,12 @@ import { useRouter } from "next/navigation";
 import { useForm, SubmitHandler } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { loginUser } from "@/lib/api"; // Import the API function
+import { loginUser, loginWithFirebaseToken } from "@/lib/api"; // Import the API functions
 import { useAuth } from "@/context/AuthContext"; // Import useAuth hook
 import { toast } from "sonner"; // Import toast
-// ChromeIcon might not be used if social logins aren't fully implemented yet, but keeping for consistency from old file
+// Firebase imports for Google Sign-In
+import { auth as firebaseAuth } from "@/lib/firebase"; // Renamed to avoid conflict with useAuth's auth
+import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 // import { ChromeIcon } from "lucide-react";
 
 // Zod schema
@@ -28,10 +30,11 @@ type LoginFormValues = z.infer<typeof formSchema>;
 
 export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(false); // For email/password form
+  const [isSocialLoading, setIsSocialLoading] = useState(false); // For social logins
 
   const router = useRouter();
-  const auth = useAuth();
+  const auth = useAuth(); // This is from AuthContext
 
   const { register, handleSubmit, formState: { errors } } = useForm<LoginFormValues>({
     resolver: zodResolver(formSchema),
@@ -57,6 +60,41 @@ export default function LoginPage() {
       toast.error(error.data?.message || error.message || "An unexpected error occurred during login.");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setIsSocialLoading(true);
+    try {
+      const provider = new GoogleAuthProvider();
+      // You can add custom parameters if needed
+      // provider.addScope('profile');
+      // provider.addScope('email');
+      const result = await signInWithPopup(firebaseAuth, provider);
+      const idToken = await result.user.getIdToken();
+
+      // Call the actual API function
+      const backendResponse = await loginWithFirebaseToken(idToken);
+
+      if (backendResponse.token && backendResponse.user) {
+        toast.success("Google Sign-In successful! Redirecting...");
+        auth.login(backendResponse.token, backendResponse.user);
+        router.push('/feed'); // Or to user's preferred page or onboarding
+      } else {
+        // This case might not be reached if loginWithFirebaseTokenPlaceholder throws an error
+        throw new Error("Failed to get JWT token from backend after Google Sign-In.");
+      }
+    } catch (error: any) {
+      console.error("Google Sign-In failed:", error);
+      if (error.code === 'auth/popup-closed-by-user') {
+        toast.info("Google Sign-In cancelled by user.");
+      } else if (error.message?.includes("Backend for Firebase login not implemented yet")) {
+        toast.error("Google Sign-In failed: Backend integration is pending.");
+      } else {
+        toast.error(error.data?.message || error.message || "An unexpected error occurred during Google Sign-In.");
+      }
+    } finally {
+      setIsSocialLoading(false);
     }
   };
 
@@ -138,8 +176,9 @@ export default function LoginPage() {
 
           <div className="flex gap-8 mb-6 justify-center">
             <button
-              onClick={() => toast.info("Google login not yet implemented.")}
-              className="hover:opacity-70 transition-opacity cursor-pointer"
+              onClick={handleGoogleSignIn}
+              disabled={isSocialLoading || isLoading} // Disable if email/pass loading or social loading
+              className="hover:opacity-70 transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <svg className="w-12 h-12" viewBox="0 0 24 24">
                 <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
